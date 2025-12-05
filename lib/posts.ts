@@ -1,87 +1,97 @@
-import { supabase } from "./supabaseClient";
+// lib/posts.ts
 
-export interface Post {
-  id: string;
-  zone: string;
-  body: string;
-  votes: number;
-  created_at: string;
-  author_hash: string | null;
-  is_hidden: boolean;
-  is_blurred: boolean;
-  moderation_reason: string | null;
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+import { Post } from "@/types/Post";
+
+export async function getSupabaseServer() {
+  // NEXT.JS 15/16 — cookies() MUST be awaited
+  const cookieStore = await cookies();
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookies) {
+          // Supabase SSR requires this to exist but we don't need server writes
+        }
+      }
+    }
+  );
 }
 
-/**
- * Fetch recent posts for a given zone
- */
+// -------------------------
+// GET RECENT POSTS BY ZONE
+// -------------------------
 export async function getRecentPosts(zone: string): Promise<Post[]> {
+  const supabase = await getSupabaseServer();
+
   const { data, error } = await supabase
     .from("posts")
     .select("*")
     .eq("zone", zone)
-    .eq("is_hidden", false)
     .order("created_at", { ascending: false })
     .limit(50);
 
   if (error) {
-    console.error("Error fetching posts:", error);
+    console.error("Error loading posts:", error);
     return [];
   }
 
-  return data || [];
+  return data as Post[];
 }
 
-/**
- * Create a new post with moderation metadata
- * This version accepts a moderation object injected by Kiro Hooks.
- */
-export async function createPost(
-  zone: string,
-  body: string,
-  moderation?: {
-    blur?: boolean;
-    hide?: boolean;
-    reason?: string | null;
-  }
-): Promise<Post | null> {
-  if (!body.trim()) return null;
+// -------------------------
+// CREATE POST
+// -------------------------
+export async function createPost({
+  body,
+  zone,
+  author_hash,
+  is_blurred,
+  is_hidden,
+  moderation_reason
+}: {
+  body: string;
+  zone: string;
+  author_hash: string;
+  is_blurred: boolean;
+  is_hidden: boolean;
+  moderation_reason: string | null;
+}) {
 
-  // Anonymous identity fingerprint
-  let authorHash =
-    typeof window !== "undefined"
-      ? localStorage.getItem("safeyak_author_hash")
-      : null;
+  const supabase = await getSupabaseServer();
 
-  if (!authorHash) {
-    authorHash = crypto.randomUUID();
-    if (typeof window !== "undefined") {
-      localStorage.setItem("safeyak_author_hash", authorHash);
+  // 1. Rate limit: fetch user
+  const { data: user } = await supabase
+    .from("users")
+    .select("*")
+    .eq("hash", author_hash)
+    .single();
+
+  if (user?.last_post_at) {
+    const seconds = (Date.now() - new Date(user.last_post_at).getTime()) / 1000;
+    if (seconds < 15) {
+      return { error: "You are posting too fast. Try again shortly." };
     }
   }
 
-  // Default moderation if none is passed
-  const mod = {
-    blur: moderation?.blur || false,
-    hide: moderation?.hide || false,
-    reason: moderation?.reason || null,
-  };
-
-  // Insert post into database
+  // 2. Insert post
   const { data, error } = await supabase
     .from("posts")
-    .insert([
-      {
-        zone,
-        body,
-        votes: 0,
-        author_hash: authorHash,
-        is_hidden: mod.hide,
-        is_blurred: mod.blur,
-        moderation_reason: mod.reason,
-      },
-    ])
-    .select()
+    .insert({
+      body,
+      zone,
+      author_hash,
+      is_blurred,
+      is_hidden,
+      moderation_reason
+    })
+    .select("*")
     .single();
 
   if (error) {
@@ -89,5 +99,18 @@ export async function createPost(
     return null;
   }
 
-  return data as Post;
+  // 3. Strike logic
+  if (is_blurred || is_hidden) {
+    await supabase.rpc("increment_strike", {
+      user_hash: author_hash
+    });
+  }
+
+  // 4. Update last_post_at
+  await supabase
+    .from("users")
+    .update({ last_post_at: new Date().toISOString() })
+    .eq("hash", author_hash);
+
+  return data;
 }
