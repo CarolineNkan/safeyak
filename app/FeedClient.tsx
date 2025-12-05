@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Post } from "@/types/Post";
 import { Comment } from "@/types/Comment";
 import CommentComposer from "./CommentComposer";
@@ -9,17 +9,34 @@ import { supabase } from "@/lib/supabaseClient";
 type Props = {
   initialPosts: Post[];
   zone: string;
-  onPostCreated: (post: Post) => void;
 };
 
-export default function FeedClient({ initialPosts, zone, onPostCreated }: Props) {
+// ---- helpers ----
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return "now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+}
+
+function getAuthorInitial(hash: string | null) {
+  if (!hash) return "👻";
+  return hash[0].toUpperCase();
+}
+
+export default function FeedClient({ initialPosts, zone }: Props) {
   const [posts, setPosts] = useState<Post[]>(initialPosts);
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, Comment[]>>({});
+  const [isLoadingInitial] = useState(false); // left for future client fetch
+  const [toast, setToast] = useState<string | null>(null);
 
-  // ========================================================
-  // 🔥 REALTIME: POSTS
-  // ========================================================
+  // ---------- Realtime Posts ----------
   useEffect(() => {
     const channel = supabase
       .channel("realtime-posts")
@@ -28,7 +45,6 @@ export default function FeedClient({ initialPosts, zone, onPostCreated }: Props)
         { event: "INSERT", schema: "public", table: "posts" },
         (payload: any) => {
           const newPost = payload.new as Post;
-
           setPosts((prev) => {
             if (prev.some((p) => p.id === newPost.id)) return prev;
             if (newPost.zone !== zone) return prev;
@@ -43,9 +59,7 @@ export default function FeedClient({ initialPosts, zone, onPostCreated }: Props)
     };
   }, [zone]);
 
-  // ========================================================
-  // 🔥 REALTIME: COMMENTS
-  // ========================================================
+  // ---------- Realtime Comments ----------
   useEffect(() => {
     const channel = supabase
       .channel("realtime-comments")
@@ -54,7 +68,6 @@ export default function FeedClient({ initialPosts, zone, onPostCreated }: Props)
         { event: "INSERT", schema: "public", table: "comments" },
         (payload: any) => {
           const newComment = payload.new as Comment;
-
           setComments((prev) => ({
             ...prev,
             [newComment.post_id]: [
@@ -71,38 +84,46 @@ export default function FeedClient({ initialPosts, zone, onPostCreated }: Props)
     };
   }, []);
 
-  // ========================================================
-  // 📥 LOAD COMMENTS FOR A POST
-  // ========================================================
+  // ---------- Load Comments ----------
   async function loadComments(postId: string) {
     if (comments[postId]) {
       setExpandedPostId(expandedPostId === postId ? null : postId);
       return;
     }
 
-    const { data, error } = await supabase
-      .from("comments")
-      .select("*")
-      .eq("post_id", postId)
-      .order("created_at", { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from("comments")
+        .select("*")
+        .eq("post_id", postId)
+        .order("created_at", { ascending: true });
 
-    if (!error && data) {
-      setComments((prev) => ({ ...prev, [postId]: data }));
+      if (error) {
+        setToast("Could not load replies.");
+        return;
+      }
+
+      setComments((prev) => ({
+        ...prev,
+        [postId]: (data || []) as Comment[],
+      }));
       setExpandedPostId(postId);
+    } catch {
+      setToast("Something went wrong loading replies.");
     }
   }
 
-  // ========================================================
-  // ➕ NEW COMMENT CREATED
-  // ========================================================
-  function handleCommentCreated(postId: string, comment: Comment, locked: boolean) {
-    // Add new comment into state
+  // ---------- New Comment Handler ----------
+  function handleCommentCreated(
+    postId: string,
+    comment: Comment,
+    locked: boolean
+  ) {
     setComments((prev) => ({
       ...prev,
       [postId]: [...(prev[postId] || []), comment],
     }));
 
-    // Update locked status if thread becomes locked
     if (locked) {
       setPosts((prev) =>
         prev.map((p) => (p.id === postId ? { ...p, locked: true } : p))
@@ -110,135 +131,239 @@ export default function FeedClient({ initialPosts, zone, onPostCreated }: Props)
     }
   }
 
+  // ---------- Voting ----------
+  async function handleVote(postId: string, dir: 1 | -1) {
+    const stored = window.localStorage.getItem("safeyak_author_hash");
+    if (!stored) {
+      setToast("Anonymous identity error.");
+      return;
+    }
 
+    // optimistic update
+    setPosts((prev) =>
+      prev.map((p) => {
+        if (p.id !== postId) return p;
+        const score = p.score ?? 0;
+        const up = p.upvotes ?? 0;
+        const down = p.downvotes ?? 0;
+        return {
+          ...p,
+          score: score + dir,
+          upvotes: dir === 1 ? up + 1 : up,
+          downvotes: dir === -1 ? down + 1 : down,
+        };
+      })
+    );
 
-  // Helper function to format time ago
-  function timeAgo(dateString: string): string {
-    const now = new Date();
-    const past = new Date(dateString);
-    const diffMs = now.getTime() - past.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
+    const { error } = await supabase.rpc("cast_vote", {
+      p_post_id: postId,
+      p_user_hash: stored,
+      p_new_vote: dir,
+    });
 
-    if (diffMins < 1) return "just now";
-    if (diffMins < 60) return `${diffMins}m`;
-    if (diffHours < 24) return `${diffHours}h`;
-    if (diffDays < 7) return `${diffDays}d`;
-    return past.toLocaleDateString();
+    if (error) {
+      console.error(error);
+      setToast("Vote failed.");
+    }
   }
 
-  // ========================================================
-  // UI
-  // ========================================================
-  return (
-    <div className="flex flex-col gap-3 p-4">
+  // ---------- Bookmarks ----------
+  async function handleBookmark(postId: string) {
+    const stored = window.localStorage.getItem("safeyak_author_hash");
+    if (!stored) {
+      setToast("Anonymous identity error.");
+      return;
+    }
 
-      {/* EMPTY STATE */}
-      {posts.length === 0 && (
-        <p className="text-gray-400 text-center mt-8">No posts yet in this zone.</p>
+    // optimistic update
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === postId
+          ? { ...p, bookmarks_count: (p.bookmarks_count ?? 0) + 1 }
+          : p
+      )
+    );
+
+    const { error } = await supabase.rpc("toggle_bookmark", {
+      p_post_id: postId,
+      p_user_hash: stored,
+    });
+
+    if (error) {
+      console.error(error);
+      setToast("Could not update bookmark.");
+    }
+  }
+
+  // ---------- UI ----------
+  const showSkeletons = isLoadingInitial && posts.length === 0;
+
+  return (
+    <div className="relative flex flex-col h-full pb-24">
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 bg-black/80 text-xs px-4 py-2 rounded-full border border-white/10">
+          {toast}
+        </div>
       )}
 
-      {/* POSTS - YikYak style white cards */}
-      {posts.map((post) => (
-        <div
-          key={post.id}
-          className="bg-white rounded-2xl p-4 shadow-lg"
-        >
-          {/* POST HEADER - Avatar + Time */}
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center text-white text-xs font-bold">
-              👤
-            </div>
-            <span className="text-xs text-gray-500">{timeAgo(post.created_at)}</span>
-          </div>
+      <div className="flex flex-col gap-3 px-3 pt-3">
+        {showSkeletons &&
+          Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className="neon-card skeleton h-24 rounded-2xl border border-slate-800"
+            />
+          ))}
 
-          {/* THREAD LOCKED BANNER */}
-          {post.locked && (
-            <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-xs text-red-600">
-                🚫 Thread locked
-              </p>
-            </div>
-          )}
+        {!showSkeletons && posts.length === 0 && (
+          <p className="text-gray-500 text-center mt-6 text-sm">
+            No posts yet in this zone 👻
+          </p>
+        )}
 
-          {/* POST CONTENT */}
-          {post.is_hidden ? (
-            <p className="text-gray-400 italic text-sm">[Hidden for safety]</p>
-          ) : (
-            <>
-              {post.is_blurred ? (
-                <div
-                  className="blur-sm hover:blur-none cursor-pointer transition text-base leading-relaxed text-gray-900"
-                  title="Tap to reveal"
-                >
-                  {post.body}
+        {posts.map((post) => {
+          const score = post.score ?? 0;
+          const hidden = post.is_hidden;
+          const blurred = post.is_blurred;
+          const bookmarks = post.bookmarks_count ?? 0;
+
+          return (
+            <div
+              key={post.id}
+              className="neon-card bg-slate-950/80 border border-slate-800/80 px-3 py-3 flex flex-col gap-2"
+            >
+              {/* Header */}
+              <div className="flex items-center gap-2">
+                <div className="ghost-avatar">
+                  {getAuthorInitial(post.author_hash)}
                 </div>
-              ) : (
-                <p className="text-base leading-relaxed whitespace-pre-line text-gray-900">{post.body}</p>
+                <div className="flex flex-col text-[10px] leading-tight">
+                  <span className="uppercase tracking-wide text-violet-300">
+                    {post.zone}
+                  </span>
+                  <span className="text-slate-400">
+                    {timeAgo(post.created_at)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="mt-1 text-sm">
+                {hidden ? (
+                  <p className="text-slate-500 italic text-xs">
+                    [Hidden for safety]
+                  </p>
+                ) : blurred ? (
+                  <p
+                    className="blur-sm hover:blur-none cursor-pointer transition text-sm leading-relaxed"
+                    title="Blurred for safety"
+                  >
+                    {post.body}
+                  </p>
+                ) : (
+                  <p className="text-slate-50 whitespace-pre-line">
+                    {post.body}
+                  </p>
+                )}
+              </div>
+
+              {post.locked && (
+                <div className="mt-1 bg-red-900/30 border border-red-500/40 px-2 py-1 rounded">
+                  <p className="text-[10px] text-red-300">
+                    🚫 Thread locked due to repeated violations
+                  </p>
+                </div>
               )}
-            </>
-          )}
 
-          {/* ACTION BAR - YikYak style */}
-          {!post.is_hidden && (
-            <div className="flex items-center gap-4 mt-4 pt-3 border-t border-gray-100">
-              <button
-                onClick={() => loadComments(post.id)}
-                className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900"
-              >
-                <span>💬</span>
-                <span>{comments[post.id]?.length || 0}</span>
-              </button>
-              <button className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900">
-                <span>⬆️</span>
-              </button>
-              <button className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900">
-                <span>⬇️</span>
-              </button>
-            </div>
-          )}
-
-          {/* COMMENTS SECTION */}
-          {expandedPostId === post.id && !post.is_hidden && (
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              {comments[post.id]?.length > 0 && (
-                <div className="space-y-2 mb-4">
-                  {comments[post.id].map((comment) => (
-                    <div
-                      key={comment.id}
-                      className="p-3 bg-gray-50 rounded-xl"
+              {/* Actions */}
+              <div className="mt-1 flex items-center justify-between text-xs text-slate-400">
+                <div className="flex items-center gap-3">
+                  {/* Voting */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleVote(post.id, 1)}
+                      className="px-1 py-0.5 rounded hover:bg-slate-800"
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 to-cyan-400 flex items-center justify-center text-white text-[10px]">
-                          👤
-                        </div>
-                        <span className="text-[10px] text-gray-500">{timeAgo(comment.created_at)}</span>
+                      ⬆
+                    </button>
+                    <span className="min-w-[2ch] text-center text-[11px]">
+                      {score}
+                    </span>
+                    <button
+                      onClick={() => handleVote(post.id, -1)}
+                      className="px-1 py-0.5 rounded hover:bg-slate-800"
+                    >
+                      ⬇
+                    </button>
+                  </div>
+
+                  {/* Comments */}
+                  {!hidden && (
+                    <button
+                      onClick={() => loadComments(post.id)}
+                      className="flex items-center gap-1 hover:text-slate-100"
+                    >
+                      💬
+                      <span className="text-[11px]">
+                        {expandedPostId === post.id ? "Hide" : "Replies"}
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Bookmark */}
+                  {!hidden && (
+                    <button
+                      onClick={() => handleBookmark(post.id)}
+                      className="flex items-center gap-1 hover:text-yellow-300"
+                    >
+                      ⭐
+                      <span className="text-[11px]">{bookmarks}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Comments Section */}
+              {expandedPostId === post.id && !hidden && (
+                <div className="mt-3 pl-3 border-l border-slate-800 space-y-3">
+                  {comments[post.id]?.length ? (
+                    comments[post.id].map((c) => (
+                      <div
+                        key={c.id}
+                        className="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2"
+                      >
+                        {c.is_blurred ? (
+                          <p className="blur-sm hover:blur-none cursor-pointer text-xs">
+                            {c.body}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-slate-100">{c.body}</p>
+                        )}
+                        <p className="mt-1 text-[9px] text-slate-500">
+                          {timeAgo(c.created_at)}
+                        </p>
                       </div>
-                      {comment.is_blurred ? (
-                        <div className="blur-sm hover:blur-none cursor-pointer transition text-sm text-gray-800">
-                          {comment.body}
-                        </div>
-                      ) : (
-                        <p className="text-sm whitespace-pre-line text-gray-800">{comment.body}</p>
-                      )}
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    <p className="text-[11px] text-slate-500">
+                      No replies yet.
+                    </p>
+                  )}
+
+                  <CommentComposer
+                    postId={post.id}
+                    locked={post.locked ?? false}
+                    onCommentCreated={(comment, locked) =>
+                      handleCommentCreated(post.id, comment, locked)
+                    }
+                  />
                 </div>
               )}
-
-              {/* COMMENT COMPOSER */}
-              <CommentComposer
-                postId={post.id}
-                locked={post.locked}
-                onCommentCreated={(comment, locked) =>
-                  handleCommentCreated(post.id, comment, locked)
-                }
-              />
             </div>
-          )}
-        </div>
-      ))}
+          );
+        })}
+      </div>
     </div>
   );
 }

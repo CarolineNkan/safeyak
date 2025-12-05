@@ -71,6 +71,11 @@ export default function PostComposer({ zone, onPostCreated }: {
       onSubmit={handleSubmit}
       className="p-3"
     >
+      {/* Safety notice */}
+      <p className="text-[10px] text-slate-500 mb-1 px-1">
+        🚫 Do not post bullying, threats, or harassment. Harmful posts will be hidden.
+      </p>
+
       {/* YikYak-style bottom input bar */}
       <div className="flex items-center gap-2">
         <input
@@ -84,9 +89,9 @@ export default function PostComposer({ zone, onPostCreated }: {
         <button
           type="submit"
           disabled={loading || !body.trim()}
-          className="px-5 py-2.5 bg-white text-black rounded-full text-sm font-semibold hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          className="rounded-full px-4 py-2 bg-slate-200 text-slate-900 text-sm font-medium hover:bg-white transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? "..." : "Send"}
+          {loading ? "..." : "Post"}
         </button>
       </div>
     </form>

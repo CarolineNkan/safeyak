@@ -82,22 +82,29 @@ export default function CommentComposer({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="Add a reply..."
-        disabled={loading}
-        className="flex-1 px-3 py-2 rounded-full bg-gray-100 border border-gray-200 text-sm text-gray-900 placeholder-gray-500 outline-none focus:border-gray-300 disabled:opacity-50"
-      />
-      <button
-        onClick={submit}
-        disabled={loading || !text.trim()}
-        className="px-4 py-2 bg-gray-900 text-white rounded-full text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition"
-      >
-        {loading ? "..." : "Send"}
-      </button>
+    <div>
+      {/* Safety notice */}
+      <p className="text-[10px] text-slate-500 mb-1 px-1">
+        💬 Be kind. Replies are moderated automatically.
+      </p>
+
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Add a reply..."
+          disabled={loading}
+          className="flex-1 px-3 py-2 rounded-full bg-gray-100 border border-gray-200 text-sm text-gray-900 placeholder-gray-500 outline-none focus:border-gray-300 disabled:opacity-50"
+        />
+        <button
+          onClick={submit}
+          disabled={loading || !text.trim()}
+          className="px-4 py-2 bg-gray-900 text-white rounded-full text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition"
+        >
+          {loading ? "..." : "Send"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -16,6 +16,12 @@ export type Post = {
   // Auto-lock system
   locked: boolean;
 
+  // Voting and engagement
+  score?: number;
+  upvotes?: number;
+  downvotes?: number;
+  bookmarks_count?: number;
+
   // Comments (optional, loaded separately)
   comments?: Comment[];
 };
