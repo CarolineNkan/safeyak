@@ -21,7 +21,15 @@ export type Post = {
   upvotes?: number;
   downvotes?: number;
   bookmarks_count?: number;
+  comment_count?: number;
+
+  // Reputation (for author)
+  reputation?: number;
 
   // Comments (optional, loaded separately)
   comments?: Comment[];
+
+  // Edit/Delete permissions (client-side only)
+  can_edit?: boolean;
+  can_delete?: boolean;
 };

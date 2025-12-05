@@ -51,6 +51,7 @@ export default function CommentComposer({
           body: text,
           author_hash: authorHash,
           is_blurred: is_blurred,
+          is_hidden: is_hidden,
         }),
       });
 

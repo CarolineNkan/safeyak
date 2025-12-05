@@ -38,7 +38,7 @@ async function getSupabase() {
 export async function POST(req: Request) {
   try {
     const supabase = await getSupabase();
-    const { post_id, body, author_hash, is_blurred } = await req.json();
+    const { post_id, body, author_hash, is_blurred, is_hidden } = await req.json();
 
     if (!post_id || !body || !author_hash) {
       return NextResponse.json(
@@ -57,6 +57,7 @@ export async function POST(req: Request) {
         body,
         author_hash,
         is_blurred: Boolean(is_blurred),
+        is_hidden: Boolean(is_hidden),
       })
       .select("*")
       .single();

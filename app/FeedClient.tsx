@@ -5,6 +5,7 @@ import { Post } from "@/types/Post";
 import { Comment } from "@/types/Comment";
 import CommentComposer from "./CommentComposer";
 import { supabase } from "@/lib/supabaseClient";
+import ReputationBadge from "@/components/ReputationBadge";
 
 type Props = {
   initialPosts: Post[];
@@ -35,6 +36,15 @@ export default function FeedClient({ initialPosts, zone }: Props) {
   const [comments, setComments] = useState<Record<string, Comment[]>>({});
   const [isLoadingInitial] = useState(false); // left for future client fetch
   const [toast, setToast] = useState<string | null>(null);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [editBody, setEditBody] = useState("");
+  const [authorHash, setAuthorHash] = useState<string | null>(null);
+
+  // Get author hash on mount
+  useEffect(() => {
+    const hash = window.localStorage.getItem("safeyak_author_hash");
+    setAuthorHash(hash);
+  }, []);
 
   // ---------- Realtime Posts ----------
   useEffect(() => {
@@ -75,6 +85,32 @@ export default function FeedClient({ initialPosts, zone }: Props) {
               newComment,
             ],
           }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // ---------- Realtime Reputation Updates ----------
+  useEffect(() => {
+    const channel = supabase
+      .channel("reputation-updates")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "reputation" },
+        (payload: any) => {
+          const { author_hash, reputation } = payload.new;
+          
+          setPosts((prev) =>
+            prev.map((p) =>
+              p.author_hash === author_hash
+                ? { ...p, reputation }
+                : p
+            )
+          );
         }
       )
       .subscribe();
@@ -195,6 +231,92 @@ export default function FeedClient({ initialPosts, zone }: Props) {
     }
   }
 
+  // ---------- Edit Post ----------
+  function startEdit(post: Post) {
+    setEditingPostId(post.id);
+    setEditBody(post.body);
+  }
+
+  function cancelEdit() {
+    setEditingPostId(null);
+    setEditBody("");
+  }
+
+  async function saveEdit(postId: string) {
+    if (!editBody.trim() || !authorHash) {
+      setToast("Cannot save empty post.");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/editPost", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId,
+          body: editBody,
+          authorHash,
+        }),
+      });
+
+      if (!res.ok) {
+        setToast("Failed to update post.");
+        return;
+      }
+
+      const updated = await res.json();
+
+      // Update local state
+      setPosts((prev) =>
+        prev.map((p) => (p.id === postId ? { ...p, ...updated } : p))
+      );
+
+      setEditingPostId(null);
+      setEditBody("");
+      setToast("Post updated!");
+    } catch (error) {
+      console.error("Edit error:", error);
+      setToast("Something went wrong.");
+    }
+  }
+
+  // ---------- Delete Post ----------
+  async function handleDelete(postId: string) {
+    if (!authorHash) {
+      setToast("Anonymous identity error.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this post? This cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch("/api/deletePost", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId,
+          authorHash,
+        }),
+      });
+
+      if (!res.ok) {
+        setToast("Failed to delete post.");
+        return;
+      }
+
+      // Remove from UI
+      setPosts((prev) => prev.filter((p) => p.id !== postId));
+      setToast("Post deleted.");
+    } catch (error) {
+      console.error("Delete error:", error);
+      setToast("Something went wrong.");
+    }
+  }
+
   // ---------- UI ----------
   const showSkeletons = isLoadingInitial && posts.length === 0;
 
@@ -227,6 +349,8 @@ export default function FeedClient({ initialPosts, zone }: Props) {
           const hidden = post.is_hidden;
           const blurred = post.is_blurred;
           const bookmarks = post.bookmarks_count ?? 0;
+          const isAuthor = authorHash && post.author_hash === authorHash;
+          const isEditing = editingPostId === post.id;
 
           return (
             <div
@@ -238,6 +362,7 @@ export default function FeedClient({ initialPosts, zone }: Props) {
                 <div className="ghost-avatar">
                   {getAuthorInitial(post.author_hash)}
                 </div>
+                <ReputationBadge score={post.reputation ?? 0} />
                 <div className="flex flex-col text-[10px] leading-tight">
                   <span className="uppercase tracking-wide text-violet-300">
                     {post.zone}
@@ -250,17 +375,43 @@ export default function FeedClient({ initialPosts, zone }: Props) {
 
               {/* Body */}
               <div className="mt-1 text-sm">
-                {hidden ? (
+                {isEditing ? (
+                  <div className="flex flex-col gap-2">
+                    <textarea
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-slate-100 resize-none focus:outline-none focus:border-violet-500"
+                      rows={3}
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveEdit(post.id)}
+                        className="px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white text-xs rounded-lg transition"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelEdit}
+                        className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : hidden ? (
                   <p className="text-slate-500 italic text-xs">
                     [Hidden for safety]
                   </p>
                 ) : blurred ? (
-                  <p
-                    className="blur-sm hover:blur-none cursor-pointer transition text-sm leading-relaxed"
-                    title="Blurred for safety"
-                  >
-                    {post.body}
-                  </p>
+                  <div className="relative">
+                    <p className="blur-sm text-sm leading-relaxed select-none">
+                      {post.body}
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      ⚠️ Content may be offensive
+                    </p>
+                  </div>
                 ) : (
                   <p className="text-slate-50 whitespace-pre-line">
                     {post.body}
@@ -321,6 +472,28 @@ export default function FeedClient({ initialPosts, zone }: Props) {
                       <span className="text-[11px]">{bookmarks}</span>
                     </button>
                   )}
+
+                  {/* Edit (only for author) */}
+                  {isAuthor && !hidden && !isEditing && (
+                    <button
+                      onClick={() => startEdit(post)}
+                      className="flex items-center gap-1 hover:text-blue-300"
+                    >
+                      ✏️
+                      <span className="text-[11px]">Edit</span>
+                    </button>
+                  )}
+
+                  {/* Delete (only for author) */}
+                  {isAuthor && !isEditing && (
+                    <button
+                      onClick={() => handleDelete(post.id)}
+                      className="flex items-center gap-1 hover:text-red-300"
+                    >
+                      🗑️
+                      <span className="text-[11px]">Delete</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -333,8 +506,12 @@ export default function FeedClient({ initialPosts, zone }: Props) {
                         key={c.id}
                         className="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2"
                       >
-                        {c.is_blurred ? (
-                          <p className="blur-sm hover:blur-none cursor-pointer text-xs">
+                        {c.is_hidden ? (
+                          <p className="text-slate-500 italic text-xs">
+                            [Comment removed for safety]
+                          </p>
+                        ) : c.is_blurred ? (
+                          <p className="blur-sm text-xs select-none">
                             {c.body}
                           </p>
                         ) : (

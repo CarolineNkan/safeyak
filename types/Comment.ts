@@ -5,4 +5,5 @@ export type Comment = {
   author_hash: string;
   created_at: string;
   is_blurred: boolean;
+  is_hidden: boolean;
 };

@@ -69,27 +69,27 @@ export default function PostComposer({ zone, onPostCreated }: {
   return (
     <form
       onSubmit={handleSubmit}
-      className="p-3"
+      className="p-4"
     >
       {/* Safety notice */}
-      <p className="text-[10px] text-slate-500 mb-1 px-1">
+      <p className="text-[10px] text-slate-500 mb-2 px-1">
         🚫 Do not post bullying, threats, or harassment. Harmful posts will be hidden.
       </p>
 
       {/* YikYak-style bottom input bar */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <input
           type="text"
           value={body}
           onChange={(e) => setBody(e.target.value)}
           placeholder="Say something..."
           disabled={loading}
-          className="flex-1 px-4 py-2.5 rounded-full bg-gray-800 border border-gray-700 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-gray-600 disabled:opacity-50"
+          className="flex-1 px-5 py-3 rounded-full bg-slate-900 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 disabled:opacity-50 transition"
         />
         <button
           type="submit"
           disabled={loading || !body.trim()}
-          className="rounded-full px-4 py-2 bg-slate-200 text-slate-900 text-sm font-medium hover:bg-white transition disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded-full px-5 py-3 bg-violet-600 text-white text-sm font-semibold hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? "..." : "Post"}
         </button>

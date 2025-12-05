@@ -7,9 +7,9 @@ export async function POST(req: Request) {
     if (!process.env.PERSPECTIVE_API_KEY) {
       return NextResponse.json({
         error: "Moderation service unavailable",
-        blur: false,
-        hide: false,
-        reason: "Missing API key"
+        blur: true,
+        hide: true,
+        reason: "Content hidden - moderation service unavailable"
       });
     }
 
@@ -49,9 +49,9 @@ export async function POST(req: Request) {
   } catch (err) {
     return NextResponse.json({
       error: "Moderation service unavailable",
-      blur: false,
-      hide: false,
-      reason: "Error in moderation API",
+      blur: true,
+      hide: true,
+      reason: "Content hidden - moderation error",
     });
   }
 }
