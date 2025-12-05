@@ -1,0 +1,84 @@
+# Kiro Agent Hook: Runs every time a new post is created.
+# Applies SafeYak moderation rules defined in .kiro/specs/moderation.md
+
+trigger:
+  event: on_create
+  target: posts   # Supabase table name
+
+actions:
+  - type: analyze_text
+    field: body
+    config:
+      checks:
+        - bullying
+        - harassment
+        - hate_speech
+        - self_harm
+        - sexual_content
+        - doxxing
+      sensitivity: high
+
+  - type: decide
+    mapping:
+      bullying:
+        action: hide
+        reason: "Bullying or harassment"
+        strike: 1
+
+      harassment:
+        action: hide
+        reason: "Harassment"
+        strike: 1
+
+      hate_speech:
+        action: hide
+        reason: "Hate speech detected"
+        strike: 2
+
+      sexual_content:
+        action: hide
+        reason: "Sexual content is not allowed"
+        strike: 2
+
+      self_harm:
+        action: blur
+        reason: "Sensitive mental health content"
+        strike: 0
+
+      doxxing:
+        action: hide
+        reason: "Personal information is not allowed"
+        strike: 3
+
+      clean:
+        action: allow
+        reason: "Content allowed"
+        strike: 0
+
+  # Update post record according to decision
+  - type: update_record
+    table: posts
+    mapping:
+      is_hidden: "{{action == 'hide'}}"
+      is_blurred: "{{action == 'blur'}}"
+      moderation_reason: "{{reason}}"
+
+  # Update or insert user strike count
+  - type: upsert
+    table: users
+    keys: 
+      - author_hash
+    values:
+      increment: 
+        strike_count: "{{strike}}"
+
+  # Shadow-ban logic
+  - type: conditional
+    if: "{{users.strike_count >= 3}}"
+    then:
+      - type: update_record
+        table: posts
+        mapping:
+          # post is still created but hidden from others
+          is_hidden: true
+          moderation_reason: "User is shadow banned"
